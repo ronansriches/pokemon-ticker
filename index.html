@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Pokémon Card Market Ticker</title>
+<style>
+body { background:#0b0c10; color:#fff; font-family:'Courier New', monospace; margin:0; overflow:hidden; }
+.ticker-wrap { position:fixed; bottom:0; width:100%; background:#101820; border-top:2px solid #222; padding:.5rem 0; overflow:hidden; }
+.ticker { display:inline-block; white-space:nowrap; animation:scroll 80s linear infinite; }
+.ticker-item { display:inline-block; margin:0 3rem; }
+.gain { color:#00ff88; } .loss { color:#ff4c4c; }
+@keyframes scroll { 0%{ transform:translateX(100%);} 100%{ transform:translateX(-100%);} }
+</style>
+</head>
+<body>
+  <div class="ticker-wrap">
+    <div id="ticker" class="ticker">Loading Pokémon market data...</div>
+  </div>
+
+<script>
+// ---- CONFIG (no key here; serverless function hides it) ----
+const API_URL = "/api/movers";           // our proxy endpoint
+const REFRESH_INTERVAL = 5 * 60 * 1000;  // 5 minutes
+
+// ---- Tooltip + sparkline ----
+const tip = document.createElement("div");
+Object.assign(tip.style,{position:"fixed",padding:"8px 10px",background:"rgba(0,0,0,.9)",color:"#fff",
+  border:"1px solid #444",borderRadius:"6px",fontSize:".85rem",pointerEvents:"none",
+  fontFamily:"Courier New, monospace",display:"none",zIndex:1000});
+document.body.appendChild(tip);
+const spark = document.createElement("canvas"); spark.width=120; spark.height=40; spark.style.display="block"; spark.style.marginTop="4px"; tip.appendChild(spark);
+const sctx = spark.getContext("2d");
+function drawSparkline(arr){ sctx.clearRect(0,0,spark.width,spark.height); if(!arr||arr.length<2) return;
+  const min=Math.min(...arr), max=Math.max(...arr), y=v=>spark.height-((v-min)/((max-min)||1))*spark.height;
+  sctx.beginPath(); sctx.moveTo(0,y(arr[0])); arr.forEach((p,i)=>sctx.lineTo((i/(arr.length-1))*spark.width,y(p)));
+  sctx.strokeStyle="#00ff88"; sctx.lineWidth=1.5; sctx.stroke();
+  const grad=sctx.createLinearGradient(0,0,0,spark.height); grad.addColorStop(0,"rgba(0,255,136,.2)"); grad.addColorStop(1,"rgba(0,255,136,0)");
+  sctx.fillStyle=grad; sctx.lineTo(spark.width,spark.height); sctx.lineTo(0,spark.height); sctx.closePath(); sctx.fill();
+}
+function showTip(html,x,y,prices=[]){ tip.firstChild?.remove(); const d=document.createElement("div"); d.innerHTML=html; tip.insertBefore(d,spark);
+  drawSparkline(prices); tip.style.left=`${x+15}px`; tip.style.top=`${y+15}px`; tip.style.display="block"; }
+function hideTip(){ tip.style.display="none"; }
+
+// ---- Popup ----
+const overlay=document.createElement("div"); Object.assign(overlay.style,{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",display:"none",alignItems:"center",justifyContent:"center",zIndex:2000});
+const popup=document.createElement("div"); Object.assign(popup.style,{background:"#1c1c1c",color:"#fff",padding:"20px",borderRadius:"10px",boxShadow:"0 0 15px rgba(0,0,0,.5)",width:"340px",maxWidth:"90%",textAlign:"center",fontFamily:"Courier New, monospace",position:"relative"});
+const pImg=document.createElement("img"); Object.assign(pImg.style,{width:"200px",height:"280px",objectFit:"cover",border:"1px solid #444",borderRadius:"8px"});
+const pChart=document.createElement("canvas"); pChart.width=280; pChart.height=120; pChart.style.marginTop="10px";
+const pClose=document.createElement("div"); pClose.textContent="✖"; Object.assign(pClose.style,{position:"absolute",top:"8px",right:"12px",cursor:"pointer",fontSize:"1.25rem",color:"#aaa"});
+pClose.onclick=()=>overlay.style.display="none"; overlay.onclick=e=>{ if(e.target===overlay) overlay.style.display="none"; }; document.addEventListener("keydown",e=>{ if(e.key==="Escape") overlay.style.display="none"; });
+popup.appendChild(pClose); popup.appendChild(pImg); popup.appendChild(pChart); overlay.appendChild(popup); document.body.appendChild(overlay);
+function drawPopupChart(arr){ const c=pChart.getContext("2d"); c.clearRect(0,0,pChart.width,pChart.height); if(!arr||arr.length<2) return;
+  const min=Math.min(...arr), max=Math.max(...arr), y=v=>pChart.height-((v-min)/((max-min)||1))*pChart.height;
+  c.beginPath(); c.moveTo(0,y(arr[0])); arr.forEach((p,i)=>c.lineTo((i/(arr.length-1))*pChart.width,y(p))); c.strokeStyle="#00ff88"; c.lineWidth=2; c.stroke(); }
+
+// ---- Helpers ----
+function trendIcon(ch){ const a=Math.abs(ch); if(a<5) return "🔹"; if(a<15) return "🔸"; return ch>=0?"🚀":"💀"; }
+
+// ---- Fetch + render ----
+async function fetchData(){
+  try{
+    const r=await fetch(API_URL); if(!r.ok) throw new Error(await r.text());
+    const data=await r.json(); render(data);
+  }catch(e){
+    document.getElementById("ticker").textContent="⚠️ Unable to load data. (Server)";
+    console.error(e);
+  }
+}
+function render(data){
+  const old=document.getElementById("ticker"); const wrap=document.querySelector(".ticker-wrap");
+  const t=document.createElement("div"); t.className="ticker"; t.id="ticker";
+  data.forEach(card=>{
+    const div=document.createElement("div"); div.className="ticker-item";
+    const change=Number(card.percent_change||0); const price=Number(card.market_price||0);
+    const prev=Number(card.previous_price?? price/(1+change/100)); const hist=(card.price_history||[prev,price]).map(Number);
+    const up=change>=0; div.classList.add(up?"gain":"loss"); const sym=up?"▲":"▼"; const em=up?"🔥":"📉"; const tr=trendIcon(change);
+    div.textContent=`${em} ${card.card_name} (${card.set_name}) ${tr} ${sym} ${change.toFixed(2)}%  $${price.toFixed(2)}`;
+    div.addEventListener("mousemove",(e)=>{ let html=`<strong>${card.card_name}</strong><br>Current: $${price.toFixed(2)}<br>Previous: $${prev.toFixed(2)}<br>Change: ${change.toFixed(2)}% ${sym}<br>`;
+      if(card.volume) html+=`Volume: ${card.volume}<br>`; showTip(html,e.clientX,e.clientY,hist); });
+    div.addEventListener("mouseleave",hideTip);
+    div.addEventListener("click",()=>{ overlay.style.display="flex"; pImg.src=card.image_url||"https://via.placeholder.com/200x280?text=No+Image"; drawPopupChart(hist); });
+    t.appendChild(div);
+  });
+  wrap.replaceChild(t, old);
+}
+fetchData(); setInterval(fetchData, REFRESH_INTERVAL);
+</script>
+</body>
+</html>
+
+
+initial comment
