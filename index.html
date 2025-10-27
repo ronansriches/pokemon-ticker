@@ -1,93 +1,145 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Pokémon Card Market Ticker</title>
-<style>
-body { background:#0b0c10; color:#fff; font-family:'Courier New', monospace; margin:0; overflow:hidden; }
-.ticker-wrap { position:fixed; bottom:0; width:100%; background:#101820; border-top:2px solid #222; padding:.5rem 0; overflow:hidden; }
-.ticker { display:inline-block; white-space:nowrap; animation:scroll 80s linear infinite; }
-.ticker-item { display:inline-block; margin:0 3rem; }
-.gain { color:#00ff88; } .loss { color:#ff4c4c; }
-@keyframes scroll { 0%{ transform:translateX(100%);} 100%{ transform:translateX(-100%);} }
-</style>
-</head>
-<body>
-  <div class="ticker-wrap">
-    <div id="ticker" class="ticker">Loading Pokémon market data...</div>
-  </div>
-
 <script>
-// ---- CONFIG (no key here; serverless function hides it) ----
-const API_URL = "/api/movers";           // our proxy endpoint
-const REFRESH_INTERVAL = 5 * 60 * 1000;  // 5 minutes
+const API_URL = "/api/movers"; // our proxy endpoint (stays the same)
+const REFRESH_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
-// ---- Tooltip + sparkline ----
-const tip = document.createElement("div");
-Object.assign(tip.style,{position:"fixed",padding:"8px 10px",background:"rgba(0,0,0,.9)",color:"#fff",
-  border:"1px solid #444",borderRadius:"6px",fontSize:".85rem",pointerEvents:"none",
-  fontFamily:"Courier New, monospace",display:"none",zIndex:1000});
-document.body.appendChild(tip);
-const spark = document.createElement("canvas"); spark.width=120; spark.height=40; spark.style.display="block"; spark.style.marginTop="4px"; tip.appendChild(spark);
-const sctx = spark.getContext("2d");
-function drawSparkline(arr){ sctx.clearRect(0,0,spark.width,spark.height); if(!arr||arr.length<2) return;
-  const min=Math.min(...arr), max=Math.max(...arr), y=v=>spark.height-((v-min)/((max-min)||1))*spark.height;
-  sctx.beginPath(); sctx.moveTo(0,y(arr[0])); arr.forEach((p,i)=>sctx.lineTo((i/(arr.length-1))*spark.width,y(p)));
-  sctx.strokeStyle="#00ff88"; sctx.lineWidth=1.5; sctx.stroke();
-  const grad=sctx.createLinearGradient(0,0,0,spark.height); grad.addColorStop(0,"rgba(0,255,136,.2)"); grad.addColorStop(1,"rgba(0,255,136,0)");
-  sctx.fillStyle=grad; sctx.lineTo(spark.width,spark.height); sctx.lineTo(0,spark.height); sctx.closePath(); sctx.fill();
-}
-function showTip(html,x,y,prices=[]){ tip.firstChild?.remove(); const d=document.createElement("div"); d.innerHTML=html; tip.insertBefore(d,spark);
-  drawSparkline(prices); tip.style.left=`${x+15}px`; tip.style.top=`${y+15}px`; tip.style.display="block"; }
-function hideTip(){ tip.style.display="none"; }
-
-// ---- Popup ----
-const overlay=document.createElement("div"); Object.assign(overlay.style,{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",display:"none",alignItems:"center",justifyContent:"center",zIndex:2000});
-const popup=document.createElement("div"); Object.assign(popup.style,{background:"#1c1c1c",color:"#fff",padding:"20px",borderRadius:"10px",boxShadow:"0 0 15px rgba(0,0,0,.5)",width:"340px",maxWidth:"90%",textAlign:"center",fontFamily:"Courier New, monospace",position:"relative"});
-const pImg=document.createElement("img"); Object.assign(pImg.style,{width:"200px",height:"280px",objectFit:"cover",border:"1px solid #444",borderRadius:"8px"});
-const pChart=document.createElement("canvas"); pChart.width=280; pChart.height=120; pChart.style.marginTop="10px";
-const pClose=document.createElement("div"); pClose.textContent="✖"; Object.assign(pClose.style,{position:"absolute",top:"8px",right:"12px",cursor:"pointer",fontSize:"1.25rem",color:"#aaa"});
-pClose.onclick=()=>overlay.style.display="none"; overlay.onclick=e=>{ if(e.target===overlay) overlay.style.display="none"; }; document.addEventListener("keydown",e=>{ if(e.key==="Escape") overlay.style.display="none"; });
-popup.appendChild(pClose); popup.appendChild(pImg); popup.appendChild(pChart); overlay.appendChild(popup); document.body.appendChild(overlay);
-function drawPopupChart(arr){ const c=pChart.getContext("2d"); c.clearRect(0,0,pChart.width,pChart.height); if(!arr||arr.length<2) return;
-  const min=Math.min(...arr), max=Math.max(...arr), y=v=>pChart.height-((v-min)/((max-min)||1))*pChart.height;
-  c.beginPath(); c.moveTo(0,y(arr[0])); arr.forEach((p,i)=>c.lineTo((i/(arr.length-1))*pChart.width,y(p))); c.strokeStyle="#00ff88"; c.lineWidth=2; c.stroke(); }
-
-// ---- Helpers ----
-function trendIcon(ch){ const a=Math.abs(ch); if(a<5) return "🔹"; if(a<15) return "🔸"; return ch>=0?"🚀":"💀"; }
-
-// ---- Fetch + render ----
-async function fetchData(){
-  try{
-    const r=await fetch(API_URL); if(!r.ok) throw new Error(await r.text());
-    const data=await r.json(); render(data);
-  }catch(e){
-    document.getElementById("ticker").textContent="⚠️ Unable to load data. (Server)";
-    console.error(e);
+async function fetchData() {
+  try {
+    const res = await fetch(API_URL);
+    if (!res.ok) throw new Error(await res.text());
+    const json = await res.json();
+    renderTicker(json);
+  } catch (err) {
+    console.error(err);
+    document.getElementById("ticker").textContent = "⚠️ Unable to load data. (Check API or proxy)";
   }
 }
-function render(data){
-  const old=document.getElementById("ticker"); const wrap=document.querySelector(".ticker-wrap");
-  const t=document.createElement("div"); t.className="ticker"; t.id="ticker";
-  data.forEach(card=>{
-    const div=document.createElement("div"); div.className="ticker-item";
-    const change=Number(card.percent_change||0); const price=Number(card.market_price||0);
-    const prev=Number(card.previous_price?? price/(1+change/100)); const hist=(card.price_history||[prev,price]).map(Number);
-    const up=change>=0; div.classList.add(up?"gain":"loss"); const sym=up?"▲":"▼"; const em=up?"🔥":"📉"; const tr=trendIcon(change);
-    div.textContent=`${em} ${card.card_name} (${card.set_name}) ${tr} ${sym} ${change.toFixed(2)}%  $${price.toFixed(2)}`;
-    div.addEventListener("mousemove",(e)=>{ let html=`<strong>${card.card_name}</strong><br>Current: $${price.toFixed(2)}<br>Previous: $${prev.toFixed(2)}<br>Change: ${change.toFixed(2)}% ${sym}<br>`;
-      if(card.volume) html+=`Volume: ${card.volume}<br>`; showTip(html,e.clientX,e.clientY,hist); });
-    div.addEventListener("mouseleave",hideTip);
-    div.addEventListener("click",()=>{ overlay.style.display="flex"; pImg.src=card.image_url||"https://via.placeholder.com/200x280?text=No+Image"; drawPopupChart(hist); });
-    t.appendChild(div);
+
+// Helper: draw small sparkline
+function drawSpark(ctx, prices, width, height) {
+  ctx.clearRect(0, 0, width, height);
+  if (!prices || prices.length < 2) return;
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const scaleY = v => height - ((v - min) / ((max - min) || 1)) * height;
+  ctx.beginPath();
+  ctx.moveTo(0, scaleY(prices[0]));
+  prices.forEach((p, i) => {
+    ctx.lineTo((i / (prices.length - 1)) * width, scaleY(p));
   });
-  wrap.replaceChild(t, old);
+  ctx.strokeStyle = "#00ff88";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
 }
-fetchData(); setInterval(fetchData, REFRESH_INTERVAL);
+
+// Renders ticker items
+function renderTicker(data) {
+  const ticker = document.getElementById("ticker");
+  const newTicker = document.createElement("div");
+  newTicker.className = "ticker";
+  newTicker.id = "ticker";
+
+  data.data.slice(0, 20).forEach(card => {
+    // Pick a variant with price info
+    const variant = card.variants?.find(v => v.price) || card.variants?.[0];
+    if (!variant) return;
+
+    const price = variant.price || 0;
+    const change = variant.priceChange30d || 0;
+    const isGain = change >= 0;
+    const history = variant.priceHistory30d || variant.priceHistory7d || [];
+
+    const div = document.createElement("div");
+    div.classList.add("ticker-item", isGain ? "gain" : "loss");
+    const symbol = isGain ? "▲" : "▼";
+    const emoji = isGain ? "🔥" : "📉";
+    const trend = Math.abs(change) >= 15 ? (isGain ? "🚀" : "💀") : Math.abs(change) >= 5 ? "🔸" : "🔹";
+
+    div.textContent = `${emoji} ${card.name} (${card.set.name || "Set"}) ${trend} ${symbol} ${change.toFixed(2)}% $${price.toFixed(2)}`;
+
+    // Tooltip with sparkline
+    div.addEventListener("mousemove", e => {
+      const tip = getTooltip();
+      let html = `<strong>${card.name}</strong><br>
+                  Current: $${price.toFixed(2)}<br>
+                  Change 30d: ${change.toFixed(2)}% ${symbol}<br>`;
+      tip.innerHTML = html;
+      drawSpark(tip.ctx, history.map(Number), tip.canvas.width, tip.canvas.height);
+      tip.style.left = `${e.pageX + 15}px`;
+      tip.style.top = `${e.pageY + 15}px`;
+      tip.style.display = "block";
+    });
+    div.addEventListener("mouseleave", () => getTooltip().style.display = "none");
+
+    // Popup with larger chart
+    div.addEventListener("click", () => showPopup(card, variant, history));
+
+    newTicker.appendChild(div);
+  });
+
+  ticker.parentElement.replaceChild(newTicker, ticker);
+}
+
+// Tooltip singleton
+function getTooltip() {
+  if (window.tip) return window.tip;
+  const tip = document.createElement("div");
+  Object.assign(tip.style, {
+    position: "fixed",
+    background: "rgba(0,0,0,.85)",
+    color: "#fff",
+    padding: "8px 10px",
+    border: "1px solid #333",
+    borderRadius: "6px",
+    fontSize: "0.8rem",
+    fontFamily: "Courier New, monospace",
+    zIndex: 1000,
+    display: "none"
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = 120;
+  canvas.height = 40;
+  tip.ctx = canvas.getContext("2d");
+  tip.canvas = canvas;
+  tip.appendChild(canvas);
+  document.body.appendChild(tip);
+  window.tip = tip;
+  return tip;
+}
+
+// Popup panel
+function showPopup(card, variant, history) {
+  if (!window.popup) {
+    const overlay = document.createElement("div");
+    Object.assign(overlay.style, {
+      position: "fixed", inset: 0, background: "rgba(0,0,0,.7)",
+      display: "flex", alignItems: "center", justifyContent: "center", zIndex: 2000
+    });
+    const box = document.createElement("div");
+    Object.assign(box.style, {
+      background: "#1c1c1c", padding: "20px", borderRadius: "8px",
+      textAlign: "center", fontFamily: "Courier New, monospace", color: "#fff"
+    });
+    const img = document.createElement("img");
+    Object.assign(img.style, { width: "200px", height: "280px", borderRadius: "8px", border: "1px solid #333" });
+    const canvas = document.createElement("canvas");
+    canvas.width = 280; canvas.height = 120; canvas.style.marginTop = "10px";
+    const ctx = canvas.getContext("2d");
+
+    box.appendChild(img);
+    box.appendChild(canvas);
+    overlay.appendChild(box);
+    overlay.addEventListener("click", e => { if (e.target === overlay) overlay.remove(); });
+    window.popup = { overlay, img, canvas, ctx };
+  }
+  window.popup.img.src = card.image_url || "https://via.placeholder.com/200x280?text=No+Image";
+  const ctx = window.popup.ctx;
+  ctx.clearRect(0, 0, 280, 120);
+  if (history.length > 1) drawSpark(ctx, history.map(Number), 280, 120);
+  document.body.appendChild(window.popup.overlay);
+}
+
+// Initialize
+fetchData();
+setInterval(fetchData, REFRESH_INTERVAL);
 </script>
-</body>
-</html>
 
-
-initial comment
